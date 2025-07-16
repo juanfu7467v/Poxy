@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import nodeHtmlToImage from "node-html-to-image";
+import Handlebars from "handlebars";
+import fs from "fs/promises";
 
 dotenv.config();
 
@@ -10,6 +13,53 @@ const TOKEN = process.env.TOKEN;
 
 app.use(cors());
 app.use(express.json());
+
+// Función para cargar plantilla
+const loadTemplate = async (name) => {
+  const content = await fs.readFile(`./templates/${name}.hbs`, "utf-8");
+  return Handlebars.compile(content);
+};
+
+// Ruta RENIEC como imagen PNG
+app.get("/reniec", async (req, res) => {
+  try {
+    const response = await fetch("https://leder-data-api.ngrok.dev/v1.7/persona/reniec", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dni: req.query.dni,
+        source: req.query.source || "database",
+        token: TOKEN,
+      }),
+    });
+
+    const result = await response.json();
+    const d = result.result || {};
+
+    const template = await loadTemplate("reniec");
+
+    const html = template({
+      ...d,
+      nombreCompleto: `${d.preNombres || ""} ${d.apePaterno || ""} ${d.apeMaterno || ""}`,
+    });
+
+    const image = await nodeHtmlToImage({
+      html,
+      type: "png",
+      quality: 100,
+      encoding: "binary",
+      puppeteerArgs: {
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      },
+    });
+
+    res.setHeader("Content-Type", "image/png");
+    res.send(image);
+  } catch (err) {
+    console.error("Error en /reniec:", err);
+    res.status(500).json({ error: "Error generando imagen", detalle: err.message });
+  }
+});
 
 // Función reutilizable
 const postToLederData = async (url, payload, res) => {
@@ -26,15 +76,7 @@ const postToLederData = async (url, payload, res) => {
   }
 };
 
-// Rutas tipo GET (como Factiliza)
-app.get("/reniec", (req, res) => {
-  postToLederData("https://leder-data-api.ngrok.dev/v1.7/persona/reniec", {
-    dni: req.query.dni,
-    source: req.query.source || "database",
-    token: TOKEN,
-  }, res);
-});
-
+// 🔁 Resto de rutas como estaban:
 app.get("/denuncias-dni", (req, res) => {
   postToLederData("https://leder-data-api.ngrok.dev/v1.7/persona/denuncias-policiales-dni", {
     dni: req.query.dni,
